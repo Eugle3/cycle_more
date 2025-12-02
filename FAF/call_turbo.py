@@ -167,8 +167,6 @@ def extract_turbo_route(data):
 # call_turbo(52.5200, 13.4050, 53.5206, 15.4094)
 
 
-
-
 if __name__ == "__main__":
     # Example main guard usage: uncomment the call you want during local runs.
     # Running this module directly will perform a network request.
