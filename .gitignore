@@ -4,6 +4,7 @@
 /_build/
 __pycache__/
 .envrc
+*.json
+raw_*
 .vscode/
 *.csv
-

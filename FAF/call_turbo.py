@@ -164,13 +164,11 @@ def extract_turbo_route(data):
     routes_df = pd.DataFrame(route_summary)
     return routes_df
 
-# call_turbo(52.5200, 13.4050, 53.5206, 15.4094)
-
 
 if __name__ == "__main__":
     # Example main guard usage: uncomment the call you want during local runs.
     # Running this module directly will perform a network request.
-    api_call = call_turbo(52.5200, 13.4050, 53.5206, 15.4094)
+    api_call = call_turbo(42.98, 4.2283, 45.16, 7.7189)
 
     # Extract and print the summaries so a developer running the script can inspect results quickly.
     summaries = extract_turbo_route(api_call)
