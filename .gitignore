@@ -3,3 +3,6 @@
 .ipynb_checkpoints/
 /_build/
 __pycache__/
+.envrc
+*.json
+raw_*
