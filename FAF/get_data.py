@@ -1,45 +1,10 @@
-# ...existing code...
-"""
-call_turbo.py
-
-Module purpose:
-This module queries the Overpass API endpoint hosted at maps.mail.ru to retrieve
-OpenStreetMap "relation" objects tagged as bicycle routes within a bounding box.
-It provides:
-- call_turbo(start_lat, start_lon, end_lat, end_lon): perform the Overpass query
-and return parsed JSON.
-- extract_turbo_route(data): extract a concise route summary (id, name,
-start/end coords, number of points).
-- test(): a tiny helper to confirm the module is importable and callable.
-
-Notes on behavior and output:
-- call_turbo builds an Overpass QL bounding-box query and posts it to the API.
-  It returns the parsed JSON (a Python dict matching Overpass JSON structure)
-  and prints the raw response data.
-  Possible exceptions: requests.RequestException on network errors,
-  ValueError/JSONDecodeError if response isn't valid JSON.
-- extract_turbo_route expects the Overpass JSON structure (a dict with key
-'elements' containing OSM elements).
-  It iterates relation-type elements, collects member geometry segments
-  (members with 'geometry'),
-  flattens them into a single coordinate list, and generates a list of summaries:
-    [{'id': int, 'name': str, 'start_lon': float, 'start_lat': float,
-    'end_lon': float, 'end_lat': float, 'num_points': int}, ...]
-  If no geometry is found for a relation it is skipped.
-
-Example usage:
-    data = call_turbo(52.5200, 13.4050, 53.5206, 15.4094)
-    summaries = extract_turbo_route(data)
-    # summaries is a list of route summary dicts
-
-Keep network calls and printing in your main guard to avoid side effects on
-import.
-"""
-# ...existing code...
 import json
 import requests
 import pandas as pd
 import os
+import time
+import openrouteservice
+
 
 def call_turbo(start_lat, start_lon, end_lat, end_lon, area_name):
     """
@@ -178,6 +143,144 @@ def extract_turbo_route(data, csv_path):
 
     return routes_df
 
+def call_ors(df, area_name, raw_dir="raw_ors_responses", sleep_seconds=1.0):
+    """
+    Calls ORS Directions API for each row in a dataframe and saves raw JSON responses.
+
+    Args:
+        df (pd.DataFrame): Contains columns:
+            ['id', 'start_lon', 'start_lat', 'end_lon', 'end_lat']
+        area_name (str): Name of the area, e.g. "Tokyo"
+        raw_dir (str): Directory to save route JSONs.
+        sleep_seconds (float): Wait time between API calls.
+
+    Saves files like:
+        raw_dir/Tokyo_route_12345.json
+    """
+
+    client = openrouteservice.Client(key=os.environ["AK"])
+
+    # Create output directory
+    os.makedirs(raw_dir, exist_ok=True)
+
+    # Clean the area name for safe filenames
+    safe_area = area_name.replace(" ", "_")
+
+    for i, row in df.iterrows():
+        route_id = row["id"]
+
+        start = [row["start_lon"], row["start_lat"]]
+        end   = [row["end_lon"], row["end_lat"]]
+
+        try:
+            # --- Call ORS API ---
+            route = client.directions(
+                coordinates=[start, end],
+                profile="cycling-regular",
+                format="geojson",
+                elevation=True,
+                instructions=True,
+                extra_info=["surface", "waytype", "waycategory", "steepness"],
+            )
+
+            # --- Build filename with area name ---
+            filename = f"{raw_dir}/{safe_area}_route_{route_id}.json"
+
+            # --- Save JSON ---
+            with open(filename, "w") as f:
+                json.dump(route, f, indent=2)
+
+            print(f"✅ Saved {safe_area}_route_{route_id}  ({i+1}/{len(df)})")
+
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
+
+        except Exception as e:
+            print(f"❌ Error on route {route_id}: {e}")
+            continue
+    return safe_area
+
+
+def extract_ors_features(area_name, raw_dir="raw_ors_responses", save_csv=True):
+    """
+    Reads all ORS route JSONs for a given area, extracts summary information,
+    returns a dataframe, and optionally saves it as a CSV.
+
+    JSON filenames must follow the format:
+        <AreaName>_route_<id>.json
+
+    Args:
+        area_name (str): Name of the area used in filenames, e.g. "Tokyo".
+        raw_dir (str): Directory containing the JSON files.
+        save_csv (bool): If True, saves the output CSV using area_name.
+
+    Returns:
+        pd.DataFrame: Extracted route summary dataframe.
+    """
+
+    safe_area = area_name.replace(" ", "_")
+    results = []
+
+    # Loop through all JSON files for this area
+    for filename in os.listdir(raw_dir):
+
+        # Only process files that start with the area name and end in .json
+        if not filename.startswith(safe_area) or not filename.endswith(".json"):
+            continue
+
+        filepath = os.path.join(raw_dir, filename)
+
+        try:
+            with open(filepath, "r") as f:
+                route = json.load(f)
+
+            props = route["features"][0]["properties"]
+            summary = props["summary"]
+            extras = props.get("extras", {})
+            segments = props.get("segments", [{}])
+            steps = segments[0].get("steps", [])
+
+            # Parse route ID from filename
+            # Example: "Tokyo_route_168466.json"
+            route_id = filename.replace(f"{safe_area}_route_", "").replace(".json", "")
+
+            # Count turns (ORS uses step['type'] codes 0–7 for turning instructions)
+            turn_steps = [s for s in steps if s.get("type") in range(8)]
+            num_turns = len(turn_steps)
+            num_steps = len(steps)
+
+            results.append({
+                "id": route_id,
+                "distance_m": summary.get("distance"),
+                "duration_s": summary.get("duration"),
+                "ascent_m": props.get("ascent"),
+                "descent_m": props.get("descent"),
+                "steps": num_steps,
+                "turns": num_turns,
+                "surface": extras.get("surface", {}).get("values", []),
+                "waytype": extras.get("waytype", {}).get("values", []),
+                "waycategory": extras.get("waycategory", {}).get("values", []),
+                "steepness": extras.get("steepness", {}).get("values", []),
+            })
+
+            print(f"✅ Parsed {filename}")
+
+        except Exception as e:
+            print(f"❌ Error parsing {filename}: {e}")
+            continue
+
+    # Convert to DataFrame
+    df = pd.DataFrame(results)
+
+    # Save CSV if requested
+    if save_csv:
+        csv_name = f"{safe_area}_processed_routes.csv"
+        df.to_csv(csv_name, index=False)
+        print(f"\n📁 Saved processed data to: {csv_name}")
+
+    return df
+
+
 if __name__ == "__main__":
     # Example main guard usage: uncomment the call you want during local runs.
     # Running this module directly will perform a network request.
@@ -185,5 +288,10 @@ if __name__ == "__main__":
 
     # Extract and print the summaries so a developer running the script can inspect results quickly.
     summaries = extract_turbo_route(api_call, "amsterdam_test.csv")
+    ors = call_ors(summaries, "amsterdam", raw_dir="amsterdam_raw_ors_responses", sleep_seconds=1.0)
+    ors_features = extract_ors_features("amsterdam", raw_dir="amsterdam_raw_ors_responses", save_csv=True)
+
     print("Route summaries:")
     print(summaries)
+    print("ORS Features:")
+    print(ors_features)
