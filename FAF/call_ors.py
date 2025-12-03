@@ -1,33 +1,41 @@
 import json
 import os
 import time
-from pathlib import Path
-
 import openrouteservice
 import pandas as pd
 
 
-def call_ORS(data, save_path="ors_route_results.json", raw_dir="raw_ors_responses_UK2", sleep_seconds=1.5):
+def call_ors(df, area_name, raw_dir="raw_ors_responses", sleep_seconds=1.0):
     """
-    Call the OpenRouteService Directions API for each route row.
+    Calls ORS Directions API for each row in a dataframe and saves raw JSON responses.
 
     Args:
-        data (DataFrame): rows with id, name, start_lon, start_lat, end_lon, end_lat.
-        save_path (str): where to persist the aggregated results.
-        raw_dir (str): directory for saving raw ORS responses (debugging).
-        sleep_seconds (float): delay between requests to avoid rate limiting.
+        df (pd.DataFrame): Contains columns:
+            ['id', 'start_lon', 'start_lat', 'end_lon', 'end_lat']
+        area_name (str): Name of the area, e.g. "Tokyo"
+        raw_dir (str): Directory to save route JSONs.
+        sleep_seconds (float): Wait time between API calls.
+
+    Saves files like:
+        raw_dir/Tokyo_route_12345.json
     """
+
     client = openrouteservice.Client(key=os.environ["AK"])
-    results = []
-    save_interval = 10
-    call_df = data
+
+    # Create output directory
     os.makedirs(raw_dir, exist_ok=True)
 
-    for i, row in call_df.iterrows():
-        start = (row["start_lon"], row["start_lat"])
-        end = (row["end_lon"], row["end_lat"])
+    # Clean the area name for safe filenames
+    safe_area = area_name.replace(" ", "_")
+
+    for i, row in df.iterrows():
+        route_id = row["id"]
+
+        start = [row["start_lon"], row["start_lat"]]
+        end   = [row["end_lon"], row["end_lat"]]
 
         try:
+            # --- Call ORS API ---
             route = client.directions(
                 coordinates=[start, end],
                 profile="cycling-regular",
@@ -37,67 +45,104 @@ def call_ORS(data, save_path="ors_route_results.json", raw_dir="raw_ors_response
                 extra_info=["surface", "waytype", "waycategory", "steepness"],
             )
 
-            # Save raw response per route for debugging/inspection
-            raw_filename = f"{raw_dir}/route_{row['id']}.json"
-            with open(raw_filename, "w") as raw_file:
-                json.dump(route, raw_file, indent=2)
+            # --- Build filename with area name ---
+            filename = f"{raw_dir}/{safe_area}_route_{route_id}.json"
+
+            # --- Save JSON ---
+            with open(filename, "w") as f:
+                json.dump(route, f, indent=2)
+
+            print(f"✅ Saved {safe_area}_route_{route_id}  ({i+1}/{len(df)})")
+
+            if sleep_seconds:
+                time.sleep(sleep_seconds)
+
+        except Exception as e:
+            print(f"❌ Error on route {route_id}: {e}")
+            continue
+
+
+def extract_ors_features(area_name, raw_dir="raw_ors_responses", save_csv=True):
+    """
+    Reads all ORS route JSONs for a given area, extracts summary information,
+    returns a dataframe, and optionally saves it as a CSV.
+
+    JSON filenames must follow the format:
+        <AreaName>_route_<id>.json
+
+    Args:
+        area_name (str): Name of the area used in filenames, e.g. "Tokyo".
+        raw_dir (str): Directory containing the JSON files.
+        save_csv (bool): If True, saves the output CSV using area_name.
+
+    Returns:
+        pd.DataFrame: Extracted route summary dataframe.
+    """
+
+    safe_area = area_name.replace(" ", "_")
+    results = []
+
+    # Loop through all JSON files for this area
+    for filename in os.listdir(raw_dir):
+
+        # Only process files that start with the area name and end in .json
+        if not filename.startswith(safe_area) or not filename.endswith(".json"):
+            continue
+
+        filepath = os.path.join(raw_dir, filename)
+
+        try:
+            with open(filepath, "r") as f:
+                route = json.load(f)
 
             props = route["features"][0]["properties"]
             summary = props["summary"]
             extras = props.get("extras", {})
-            segments = props["segments"]
-            steps = segments[0]["steps"]
-            turn_steps = [s for s in steps if s["type"] in {0, 1, 2, 3, 4, 5, 6, 7}]
-            turns = len(turn_steps)
-            steps = len(steps)
+            segments = props.get("segments", [{}])
+            steps = segments[0].get("steps", [])
 
-            results.append(
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "distance_m": summary.get("distance"),
-                    "duration_s": summary.get("duration"),
-                    "ascent_m": [props["ascent"]],
-                    "descent_m": [props["descent"]],
-                    "steps": steps,
-                    "turns": turns,
-                    "surface": extras.get("surface", {}).get("values", []),
-                    "waytype": extras.get("waytype", {}).get("values", []),
-                    "waycategory": extras.get("waycategory", {}).get("values", []),
-                    "steepness": extras.get("steepness", {}).get("values", []),
-                }
-            )
+            # Parse route ID from filename
+            # Example: "Tokyo_route_168466.json"
+            route_id = filename.replace(f"{safe_area}_route_", "").replace(".json", "")
 
-            print(f"✅ Route {i + 1} processed successfully")
-            if sleep_seconds:
-                time.sleep(sleep_seconds)  # rate-limit protection
+            # Count turns (ORS uses step['type'] codes 0–7 for turning instructions)
+            turn_steps = [s for s in steps if s.get("type") in range(8)]
+            num_turns = len(turn_steps)
+            num_steps = len(steps)
 
-            # Save partial file
-            if (i + 1) % save_interval == 0:
-                with open(save_path, "w") as f:
-                    json.dump(results, f, indent=2)
-                print(f"💾 Saved partial results after {i + 1} routes")
+            results.append({
+                "id": route_id,
+                "distance_m": summary.get("distance"),
+                "duration_s": summary.get("duration"),
+                "ascent_m": props.get("ascent"),
+                "descent_m": props.get("descent"),
+                "steps": num_steps,
+                "turns": num_turns,
+                "surface": extras.get("surface", {}).get("values", []),
+                "waytype": extras.get("waytype", {}).get("values", []),
+                "waycategory": extras.get("waycategory", {}).get("values", []),
+                "steepness": extras.get("steepness", {}).get("values", []),
+            })
+
+            print(f"✅ Parsed {filename}")
 
         except Exception as e:
-            print(f"❌ Error on route {row['id']}: {e}")
+            print(f"❌ Error parsing {filename}: {e}")
+            continue
 
-    # always write whatever we collected
-    with open(save_path, "w") as f:
-        json.dump(results, f, indent=2)
+    # Convert to DataFrame
+    df = pd.DataFrame(results)
 
-    return results
+    # Save CSV if requested
+    if save_csv:
+        csv_name = f"{safe_area}_processed_routes.csv"
+        df.to_csv(csv_name, index=False)
+        print(f"\n📁 Saved processed data to: {csv_name}")
 
-
-def load_route_data(csv_path=None):
-    """
-    Load route data CSV. Defaults to the file next to this script.
-    """
-    if csv_path is None:
-        csv_path = Path(__file__).with_name("UK_cycle_routes_summary.csv")
-    return pd.read_csv(csv_path)
+    return df
 
 
-if __name__ == "__main__":
-    route_data = load_route_data()
-    results = call_ORS(route_data, sleep_seconds=0)  # set to 0 for quick local smoke test
-    print(f"Finished. {len(results)} route(s) processed.")
+# if __name__ == "__main__":
+#     route_data = load_route_data()
+#     results = call_ORS(route_data, sleep_seconds=0)  # set to 0 for quick local smoke test
+#     print(f"Finished. {len(results)} route(s) processed.")
