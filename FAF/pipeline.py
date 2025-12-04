@@ -57,6 +57,8 @@ def run_ors_pipeline(
     bq_dataset_turbo="turbo_coordinates",
     bq_dataset_ors="cycling_routes",
     project_id="cyclemore",
+    start_index=0,     # Start index for route batch
+    end_index=None,    # End index for route batch (None = process all)
 ):
 
     safe_area = area_name.replace(" ", "_").lower()
@@ -80,7 +82,15 @@ def run_ors_pipeline(
     if coords_df.empty:
         raise ValueError(f"❌ ERROR: Turbo table '{safe_area}' is EMPTY in BigQuery!")
 
-    print(f"📌 Loaded {len(coords_df)} Turbo coordinate pairs\n")
+    print(f"📌 Loaded {len(coords_df)} total routes from BigQuery")
+
+    # Slice routes based on start and end index
+    if end_index is None:
+        end_index = len(coords_df)
+
+    coords_df = coords_df.iloc[start_index:end_index]
+
+    print(f"📌 Processing routes {start_index} to {end_index} ({len(coords_df)} routes)\n")
 
     # -------------------------------------
     # 2. Call ORS per route
@@ -126,4 +136,18 @@ def run_ors_pipeline(
 
 
 if __name__ == "__main__":
-    run_ors_pipeline(area_name="Lille")
+    # Run ORS Pipeline for Netherlands - Process routes 0 to 2000 (Day 1)
+    # Tomorrow: change to start_index=2000, end_index=4000
+    # Next day: change to start_index=4000, end_index=6000, etc.
+    run_ors_pipeline(
+        area_name="netherlands",
+        bucket_name="cycle_more_bucket",
+        gcs_ors_prefix="raw_ors_data",
+        bq_dataset_turbo="turbo_coordinates",
+        bq_dataset_ors="cycling_routes",
+        project_id="cyclemore",
+        start_index=7,     # Start at route 2
+        end_index=2000     # End at route 7 (next 5 routes)
+    )
+
+    print("\n✅ Netherlands ORS pipeline complete!")
