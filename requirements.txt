@@ -19,3 +19,6 @@ pytest
 pylint
 ipdb
 jupyterlab
+openrouteservice
+google-cloud-bigquery
+db-dtypes
