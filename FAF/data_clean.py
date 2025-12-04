@@ -82,7 +82,8 @@ if __name__ == "__main__":
 
 def upload_to_bigquery(df, table_name, dataset_id='cycling_routes', allow_truncate: bool = False):
     """
-    WARNING: This function uses WRITE_TRUNCATE by default which WILL REPLACE
+    WARNING: overites table by default 
+    This function uses WRITE_TRUNCATE by default which WILL REPLACE
     the target table in BigQuery (it deletes existing rows in the table and
     writes the provided DataFrame). Do NOT call this function unless you
     intend to replace the table contents.
