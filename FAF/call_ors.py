@@ -3,6 +3,39 @@ import os
 import time
 import openrouteservice
 import pandas as pd
+from google.cloud import bigquery
+
+
+def load_bigquery_table(
+    dataset_id: str,
+    table_id: str,
+    project_id: str = "cyclemore"
+) -> pd.DataFrame:
+    """
+    Loads a BigQuery table into a pandas DataFrame.
+
+    Args:
+        dataset_id (str): BigQuery dataset name.
+        table_id (str): BigQuery table name.
+        project_id (str): GCP project ID.
+
+    Returns:
+        pd.DataFrame: Table contents as a DataFrame.
+    """
+
+    client = bigquery.Client(project=project_id)
+
+    full_table_id = f"{project_id}.{dataset_id}.{table_id}"
+    query = f"SELECT * FROM `{full_table_id}`"
+
+    print(f"📥 Loading BigQuery table: {full_table_id}")
+
+    df = client.query(query).to_dataframe()
+
+    print(f"✅ Loaded {len(df)} rows from {full_table_id}")
+
+    return df
+
 
 
 def call_ors(df, area_name, raw_dir="raw_ors_responses", sleep_seconds=1.0):
@@ -25,8 +58,8 @@ def call_ors(df, area_name, raw_dir="raw_ors_responses", sleep_seconds=1.0):
     # Create output directory
     os.makedirs(raw_dir, exist_ok=True)
 
-    # Clean the area name for safe filenames
-    safe_area = area_name.replace(" ", "_")
+    # Clean the area name for safe, consistent filenames (lowercase)
+    safe_area = area_name.replace(" ", "_").lower()
 
     for i, row in df.iterrows():
         route_id = row["id"]
@@ -60,6 +93,7 @@ def call_ors(df, area_name, raw_dir="raw_ors_responses", sleep_seconds=1.0):
         except Exception as e:
             print(f"❌ Error on route {route_id}: {e}")
             continue
+    return safe_area
 
 
 def extract_ors_features(area_name, raw_dir="raw_ors_responses", save_csv=True):
@@ -79,14 +113,15 @@ def extract_ors_features(area_name, raw_dir="raw_ors_responses", save_csv=True):
         pd.DataFrame: Extracted route summary dataframe.
     """
 
-    safe_area = area_name.replace(" ", "_")
+    safe_area = area_name.replace(" ", "_").lower()
     results = []
 
     # Loop through all JSON files for this area
     for filename in os.listdir(raw_dir):
 
         # Only process files that start with the area name and end in .json
-        if not filename.startswith(safe_area) or not filename.endswith(".json"):
+        fname_lower = filename.lower()
+        if not fname_lower.startswith(safe_area) or not fname_lower.endswith(".json"):
             continue
 
         filepath = os.path.join(raw_dir, filename)
@@ -101,9 +136,9 @@ def extract_ors_features(area_name, raw_dir="raw_ors_responses", save_csv=True):
             segments = props.get("segments", [{}])
             steps = segments[0].get("steps", [])
 
-            # Parse route ID from filename
+            # Parse route ID from filename (case-insensitive)
             # Example: "Tokyo_route_168466.json"
-            route_id = filename.replace(f"{safe_area}_route_", "").replace(".json", "")
+            route_id = os.path.splitext(filename)[0].split("_route_")[-1]
 
             # Count turns (ORS uses step['type'] codes 0–7 for turning instructions)
             turn_steps = [s for s in steps if s.get("type") in range(8)]
@@ -142,7 +177,9 @@ def extract_ors_features(area_name, raw_dir="raw_ors_responses", save_csv=True):
     return df
 
 
-# if __name__ == "__main__":
-#     route_data = load_route_data()
-#     results = call_ORS(route_data, sleep_seconds=0)  # set to 0 for quick local smoke test
-#     print(f"Finished. {len(results)} route(s) processed.")
+if __name__ == "__main__":
+    load_bigquery_table("turbo_coordinates","amsterdam_test","cyclemore")
+
+    # route_data = load_route_data()
+    # results = call_ORS(route_data, sleep_seconds=0)  # set to 0 for quick local smoke test
+    # print(f"Finished. {len(results)} route(s) processed.")
