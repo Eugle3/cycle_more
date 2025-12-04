@@ -1,12 +1,24 @@
+# Core
+pandas
+numpy
+
+# APIs
+openrouteservice
+requests
+
+# Google Cloud
+google-cloud-storage
+google-cloud-bigquery
+db-dtypes
+
+# Where have these come from?
+matplotlib
+seaborn
+scikit-learn
 pytest
 pylint
 ipdb
 jupyterlab
-numpy
-pandas
-matplotlib
-seaborn
-scikit-learn
 openrouteservice
 google-cloud-bigquery
 db-dtypes

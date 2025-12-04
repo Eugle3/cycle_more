@@ -2,7 +2,12 @@ from google.cloud import storage
 from google.cloud import bigquery
 import os
 
-def upload_json_folder_to_gcs(local_folder: str, bucket_name: str, destination_folder: str):
+def upload_json_folder_to_gcs(
+    local_folder: str,
+    bucket_name: str,
+    destination_folder: str,
+    area_slug: str = None
+):
     """
     Uploads all JSON files from a local folder to a folder in a Google Cloud Storage bucket.
 
@@ -11,6 +16,9 @@ def upload_json_folder_to_gcs(local_folder: str, bucket_name: str, destination_f
         bucket_name (str): Name of the Google Cloud Storage bucket.
         destination_folder (str): Folder path inside the bucket (prefix).
                                   Example: "data/json-files"
+        area_slug (str, optional): If provided, only upload JSON files whose
+            names start with "<area_slug>_". Useful when multiple areas share
+            a folder. Defaults to uploading all JSONs.
 
     Returns:
         None
@@ -24,14 +32,35 @@ def upload_json_folder_to_gcs(local_folder: str, bucket_name: str, destination_f
 
     # Loop over all files
     for filename in os.listdir(local_folder):
-        if filename.endswith(".json"):
-            local_path = os.path.join(local_folder, filename)
-            blob_path = f"{destination_folder}/{filename}"  # Path in bucket
+        if not filename.endswith(".json"):
+            continue
 
-            blob = bucket.blob(blob_path)
-            blob.upload_from_filename(local_path)
+        if area_slug and not filename.startswith(f"{area_slug}_"):
+            continue
 
-            print(f"Uploaded: {local_path} → gs://{bucket_name}/{blob_path}")
+        local_path = os.path.join(local_folder, filename)
+        blob_path = f"{destination_folder}/{filename}"  # Path in bucket
+
+        blob = bucket.blob(blob_path)
+        blob.upload_from_filename(local_path)
+
+        print(f"Uploaded: {local_path} → gs://{bucket_name}/{blob_path}")
+
+
+def upload_file_to_gcs(local_path: str, bucket_name: str, destination_path: str):
+    """
+    Upload a single file to a specified path in a GCS bucket.
+    """
+    client = storage.Client(project="cyclemore")
+    bucket = client.bucket(bucket_name)
+
+    destination_path = destination_path.strip("/")
+
+    blob = bucket.blob(destination_path)
+    blob.upload_from_filename(local_path)
+
+    print(f"Uploaded: {local_path} → gs://{bucket_name}/{destination_path}")
+
 
 def upload_csv_to_bigquery(
     csv_path: str,
