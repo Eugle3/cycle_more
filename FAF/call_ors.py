@@ -4,6 +4,10 @@ import time
 import openrouteservice
 import pandas as pd
 from google.cloud import bigquery
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def load_bigquery_table(
