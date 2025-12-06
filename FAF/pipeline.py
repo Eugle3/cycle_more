@@ -140,14 +140,4 @@ if __name__ == "__main__":
     # Tomorrow: change to start_index=2000, end_index=4000
     # Next day: change to start_index=4000, end_index=6000, etc.
     run_ors_pipeline(
-        area_name="netherlands",
-        bucket_name="cycle_more_bucket",
-        gcs_ors_prefix="raw_ors_data",
-        bq_dataset_turbo="turbo_coordinates",
-        bq_dataset_ors="cycling_routes",
-        project_id="cyclemore",
-        start_index=7,     # Start at route 2
-        end_index=2000     # End at route 7 (next 5 routes)
-    )
-
-    print("\n✅ Netherlands ORS pipeline complete!")
+        area_name="Tile_ITA_Sicilia",)
