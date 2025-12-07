@@ -140,4 +140,7 @@ if __name__ == "__main__":
     # Tomorrow: change to start_index=2000, end_index=4000
     # Next day: change to start_index=4000, end_index=6000, etc.
     run_ors_pipeline(
-        area_name="Tile_ITA_Sicilia",)
+    area_name="Tile_ESP_B_Central",
+    start_index=0,
+    end_index=2000
+)

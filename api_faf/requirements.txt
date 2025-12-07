@@ -8,3 +8,4 @@ streamlit
 requests
 geopandas
 gcsfs
+google-genai
