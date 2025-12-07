@@ -22,4 +22,5 @@ jupyterlab
 openrouteservice
 google-cloud-bigquery
 db-dtypes
-geopands 
+geopandas
+gpxpy
