@@ -100,6 +100,43 @@ def call_ors(df, area_name, raw_dir="raw_ors_responses", sleep_seconds=1.0):
     return safe_area
 
 
+def extract_single_route_features(ors_response: dict, route_id: str = "uploaded") -> dict:
+    """
+    Extract features from a single ORS API response.
+
+    Args:
+        ors_response (dict): ORS API GeoJSON response
+        route_id (str): Optional route identifier
+
+    Returns:
+        dict: Extracted route features with raw ORS data
+    """
+    props = ors_response["features"][0]["properties"]
+    summary = props["summary"]
+    extras = props.get("extras", {})
+    segments = props.get("segments", [{}])
+    steps = segments[0].get("steps", [])
+
+    # Count turns (ORS uses step['type'] codes 0–7 for turning instructions)
+    turn_steps = [s for s in steps if s.get("type") in range(8)]
+    num_turns = len(turn_steps)
+    num_steps = len(steps)
+
+    return {
+        "id": route_id,
+        "distance_m": summary.get("distance"),
+        "duration_s": summary.get("duration"),
+        "ascent_m": props.get("ascent"),
+        "descent_m": props.get("descent"),
+        "steps": num_steps,
+        "turns": num_turns,
+        "surface": extras.get("surface", {}).get("values", []),
+        "waytype": extras.get("waytype", {}).get("values", []),
+        "waycategory": extras.get("waycategory", {}).get("values", []),
+        "steepness": extras.get("steepness", {}).get("values", []),
+    }
+
+
 def extract_ors_features(area_name, raw_dir="raw_ors_responses", save_csv=True):
     """
     Reads all ORS route JSONs for a given area, extracts summary information,
@@ -134,34 +171,13 @@ def extract_ors_features(area_name, raw_dir="raw_ors_responses", save_csv=True):
             with open(filepath, "r") as f:
                 route = json.load(f)
 
-            props = route["features"][0]["properties"]
-            summary = props["summary"]
-            extras = props.get("extras", {})
-            segments = props.get("segments", [{}])
-            steps = segments[0].get("steps", [])
-
             # Parse route ID from filename (case-insensitive)
             # Example: "Tokyo_route_168466.json"
             route_id = os.path.splitext(filename)[0].split("_route_")[-1]
 
-            # Count turns (ORS uses step['type'] codes 0–7 for turning instructions)
-            turn_steps = [s for s in steps if s.get("type") in range(8)]
-            num_turns = len(turn_steps)
-            num_steps = len(steps)
-
-            results.append({
-                "id": route_id,
-                "distance_m": summary.get("distance"),
-                "duration_s": summary.get("duration"),
-                "ascent_m": props.get("ascent"),
-                "descent_m": props.get("descent"),
-                "steps": num_steps,
-                "turns": num_turns,
-                "surface": extras.get("surface", {}).get("values", []),
-                "waytype": extras.get("waytype", {}).get("values", []),
-                "waycategory": extras.get("waycategory", {}).get("values", []),
-                "steepness": extras.get("steepness", {}).get("values", []),
-            })
+            # Use the refactored single-route function
+            route_features = extract_single_route_features(route, route_id)
+            results.append(route_features)
 
             print(f"✅ Parsed {filename}")
 

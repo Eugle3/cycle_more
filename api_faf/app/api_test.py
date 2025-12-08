@@ -7,7 +7,7 @@ from fastapi import Body, FastAPI, HTTPException
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-from .recommender import recommend_similar_routes
+from .recommender import recommend_similar_routes   
 
 
 BASE_DIR = Path(__file__).parent
