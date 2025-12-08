@@ -9,3 +9,4 @@ raw_*
 .vscode/
 *.csv
 *.json
+*.gpx
