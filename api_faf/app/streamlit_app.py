@@ -20,48 +20,7 @@ def load_data():
 @st.cache_resource
 def load_model_and_scaler(feature_cols, df):
     model = joblib.load(BASE_DIR / "model.pkl")
-    scaler = ColumnTransformer(
-        transformers=[
-            (
-                "standard",
-                StandardScaler(),
-                [
-                    "distance_m",
-                    "duration_s",
-                    "ascent_m",
-                    "descent_m",
-                    "Turn_Density",
-                    "steps",
-                    "turns",
-                ],
-            ),
-            (
-                "minmax",
-                MinMaxScaler(),
-                [
-                    "Cycleway",
-                    "on_road",
-                    "off_road",
-                    "Gravel_Tracks",
-                    "Paved_Paths",
-                    "Other",
-                    "Unknown Surface",
-                    "Paved_Road",
-                    "Pedestrian",
-                    "Unknown_Way",
-                    "Cycle Track",
-                    "Main Road",
-                    "Steep Section",
-                    "Moderate Section",
-                    "Flat Section",
-                    "Downhill Section",
-                    "Steep Downhill Section",
-                ],
-            ),
-        ],
-        remainder="passthrough",
-    )
-    scaler.fit(df[feature_cols])
+    scaler = joblib.load(BASE_DIR / "scaler.pkl")
     return model, scaler
 
 df, feature_cols = load_data()
