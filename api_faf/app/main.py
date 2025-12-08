@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 from .services import (
@@ -10,6 +10,7 @@ from .services import (
     load_model_and_scaler,
     recommend_routes,
     run_distance_change_query,
+    process_gpx_upload,
 )
 
 
@@ -74,3 +75,36 @@ def distance_change(req: DistanceChangeRequest):
 
     row = changed.iloc[0].to_dict()
     return {"route": row, "tool_args": tool_args}
+
+
+@app.post("/recommend-from-gpx", response_model=List[Recommendation])
+async def recommend_from_gpx(file: UploadFile = File(...)):
+    """
+    Upload a GPX file and get 5 similar route recommendations.
+
+    The GPX file is processed through:
+    1. Coordinate extraction (smart sampling to max 70 waypoints)
+    2. ORS API call to get route features
+    3. Feature engineering (same as training data)
+    4. KNN model prediction
+
+    Returns:
+        List of 5 similar routes with similarity scores
+    """
+    # Validate file type
+    if not file.filename.endswith('.gpx'):
+        raise HTTPException(status_code=400, detail="File must be a GPX file")
+
+    try:
+        # Read GPX content
+        gpx_content = await file.read()
+
+        # Process GPX → features → recommendations
+        recommendations = process_gpx_upload(gpx_content)
+
+        return recommendations
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"GPX parsing error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")

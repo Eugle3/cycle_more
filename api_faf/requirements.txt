@@ -9,3 +9,6 @@ requests
 geopandas
 gcsfs
 google-genai
+openrouteservice
+python-dotenv
+python-multipart

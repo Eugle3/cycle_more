@@ -5,6 +5,7 @@ This keeps Streamlit/UI concerns separate so the same logic can be used
 from FastAPI (and any other client).
 """
 
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 
@@ -14,6 +15,13 @@ import pandas as pd
 from .llm_distance import change_route_distance as _change_route_distance
 from .llm_distance import run_distance_change_query as _run_distance_change_query
 from .recommender import recommend_similar_routes
+
+# Add FAF module to path for GPX processing
+FAF_PATH = Path(__file__).resolve().parent.parent.parent / "FAF"
+if str(FAF_PATH) not in sys.path:
+    sys.path.insert(0, str(FAF_PATH))
+
+from gpx_to_features import process_gpx_file
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -26,7 +34,8 @@ def load_data() -> Tuple[pd.DataFrame, List[str]]:
     global _data_cache
     if _data_cache is None:
         df = pd.read_csv(BASE_DIR / "Data_Engineered.csv")
-        feature_cols = df.drop(["id", "name"], axis=1).columns.tolist()
+        # Drop non-feature columns (id, name, region)
+        feature_cols = df.drop(["id", "name", "region"], axis=1).columns.tolist()
         _data_cache = (df, feature_cols)
     return _data_cache
 
@@ -72,3 +81,33 @@ def run_distance_change_query(df: pd.DataFrame, user_question: str):
     Ask Gemini to choose a route_id + multiplier. Returns (route_df, tool_args, err).
     """
     return _run_distance_change_query(df, user_question)
+
+
+def process_gpx_upload(gpx_content: bytes, n_recommendations: int = 5) -> List[Dict[str, Any]]:
+    """
+    Process a GPX file upload and return route recommendations.
+
+    This is the complete pipeline for GPX uploads:
+    1. Parse GPX and extract coordinates (smart sampling to 70 waypoints)
+    2. Call ORS API to get route features
+    3. Process and engineer features (same as training data)
+    4. Use existing KNN model to find similar routes
+
+    Args:
+        gpx_content: Bytes content of the GPX file
+        n_recommendations: Number of recommendations to return (default 5)
+
+    Returns:
+        List of route recommendations with similarity scores
+
+    Raises:
+        ValueError: If GPX parsing fails
+        Exception: If processing or model prediction fails
+    """
+    # Step 1-5: GPX → engineered features (uses FAF modules)
+    engineered_features = process_gpx_file(gpx_content)
+
+    # Step 6: Get recommendations using existing model/scaler
+    recommendations = recommend_routes(engineered_features, n_recommendations)
+
+    return recommendations
