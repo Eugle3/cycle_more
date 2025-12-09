@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .services import (
@@ -12,6 +13,7 @@ from .services import (
     run_distance_change_query,
     process_gpx_upload,
 )
+from .gpx_generator import generate_gpx_for_route
 
 
 app = FastAPI(title="CycleMore API", version="0.1.0")
@@ -34,6 +36,7 @@ class Recommendation(BaseModel):
     duration_s: float
     turn_density: float
     similarity_score: float
+    primary_surface: str
 
 
 class DistanceChangeRequest(BaseModel):
@@ -108,3 +111,53 @@ async def recommend_from_gpx(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"GPX parsing error: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+
+
+@app.get("/download-gpx/{route_id}")
+def download_gpx(route_id: int):
+    """
+    Download a route as a GPX file.
+
+    Args:
+        route_id: The route ID to download
+
+    Returns:
+        GPX file ready for download
+    """
+    # Get route name from database
+    df, _ = load_data()
+    route_row = df[df['id'] == route_id]
+
+    if route_row.empty:
+        raise HTTPException(status_code=404, detail=f"Route {route_id} not found in database")
+
+    route_name = str(route_row.iloc[0]['name'])
+
+    try:
+        # Generate GPX from GCS
+        gpx_xml = generate_gpx_for_route(
+            route_id=route_id,
+            route_name=route_name,
+            bucket="cycle_more_bucket",
+            prefix="all_routes/"
+        )
+
+        # Return as downloadable file
+        return Response(
+            content=gpx_xml,
+            media_type="application/gpx+xml",
+            headers={
+                "Content-Disposition": f'attachment; filename="route_{route_id}.gpx"'
+            }
+        )
+
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Route data not found in GCS: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating GPX: {str(e)}"
+        )

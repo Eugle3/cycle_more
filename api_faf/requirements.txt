@@ -12,3 +12,5 @@ google-genai
 openrouteservice
 python-dotenv
 python-multipart
+gpxpy
+fsspec

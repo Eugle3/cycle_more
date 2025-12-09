@@ -2,6 +2,46 @@ import pandas as pd
 from typing import Any, Dict, List, Union
 
 
+def get_primary_surface(row: pd.Series) -> str:
+    """
+    Determine the primary surface type from route features.
+
+    Returns the surface type with the highest percentage.
+    """
+    surface_columns = {
+        'Gravel_Tracks': 'Gravel',
+        'Paved_Paths': 'Paved Path',
+        'Paved_Road': 'Paved Road',
+        'Cycle Track': 'Cycle Track',
+        'Main Road': 'Main Road',
+        'Pedestrian': 'Pedestrian',
+        'Unknown_Way': 'Unknown',
+        'Unknown Surface': 'Unknown',
+        'Other': 'Other',
+    }
+
+    # Find which surface has the highest value
+    max_surface = None
+    max_value = 0.0
+
+    for col, display_name in surface_columns.items():
+        if col in row.index:
+            value = float(row.get(col, 0.0))
+            if value > max_value:
+                max_value = value
+                max_surface = display_name
+
+    # If no clear surface found, check on_road vs off_road
+    if not max_surface or max_value < 0.1:
+        if 'on_road' in row.index and float(row.get('on_road', 0)) > 0.5:
+            return 'On-Road'
+        elif 'off_road' in row.index and float(row.get('off_road', 0)) > 0.5:
+            return 'Off-Road'
+        return 'Mixed'
+
+    return max_surface
+
+
 def recommend_similar_routes(
     input_features: Union[Dict[str, Any], pd.Series, pd.DataFrame],
     model,
@@ -61,6 +101,7 @@ def recommend_similar_routes(
                 "duration_s": float(rec["duration_s"]),
                 "turn_density": float(rec["Turn_Density"]),
                 "similarity_score": float(dist),
+                "primary_surface": get_primary_surface(rec),
             }
         )
 
