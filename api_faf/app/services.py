@@ -17,7 +17,12 @@ from .llm_distance import run_distance_change_query as _run_distance_change_quer
 from .recommender import recommend_similar_routes
 
 # Add FAF module to path for GPX processing
+# In Docker: services.py is at /app/app/services.py, FAF is at /app/FAF/
+# In local: services.py is at cycle_more/api_faf/app/services.py, FAF is at cycle_more/FAF/
 FAF_PATH = Path(__file__).resolve().parent.parent.parent / "FAF"
+# Check if running in Docker (FAF would be 2 levels up instead of 3)
+if not FAF_PATH.exists():
+    FAF_PATH = Path(__file__).resolve().parent.parent / "FAF"
 if str(FAF_PATH) not in sys.path:
     sys.path.insert(0, str(FAF_PATH))
 

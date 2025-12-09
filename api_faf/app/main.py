@@ -14,6 +14,7 @@ from .services import (
     process_gpx_upload,
 )
 from .gpx_generator import generate_gpx_for_route
+from .route_visualizer import visualize_route
 
 
 app = FastAPI(title="CycleMore API", version="0.1.0")
@@ -160,4 +161,59 @@ def download_gpx(route_id: int):
         raise HTTPException(
             status_code=500,
             detail=f"Error generating GPX: {str(e)}"
+        )
+
+
+@app.get("/visualize-route/{route_id}")
+def visualize_route_endpoint(route_id: int):
+    """
+    Get interactive map visualization HTML for a route.
+
+    Args:
+        route_id: The route ID to visualize
+
+    Returns:
+        HTML content of the Folium map
+    """
+    # Get route details from database
+    df, _ = load_data()
+    route_row = df[df['id'] == route_id]
+
+    if route_row.empty:
+        raise HTTPException(status_code=404, detail=f"Route {route_id} not found in database")
+
+    route_name = str(route_row.iloc[0]['name'])
+    distance_km = float(route_row.iloc[0]['distance_m']) / 1000
+    ascent_m = float(route_row.iloc[0]['ascent_m'])
+
+    try:
+        # Generate Folium map HTML
+        map_html = visualize_route(
+            route_id=route_id,
+            route_name=route_name,
+            distance_km=distance_km,
+            ascent_m=ascent_m,
+            bucket="cycle_more_bucket"
+        )
+
+        # Return HTML
+        return Response(
+            content=map_html,
+            media_type="text/html"
+        )
+
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Route data not found in GCS: {str(e)}"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid route data: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating visualization: {str(e)}"
         )
