@@ -16,6 +16,7 @@ import numpy as np
 
 from .llm_distance import change_route_distance as _change_route_distance
 from .llm_distance import run_distance_change_query as _run_distance_change_query
+from .llm_features import generate_features_from_prompt as _generate_features_from_prompt
 from .recommender import recommend_similar_routes
 from .cluster_labels import CLUSTER_LABELS
 
@@ -57,8 +58,8 @@ def load_model_and_scaler() -> Tuple[Any, Any]:
     """Load the trained model and scaler used for similarity search."""
     global _model_cache
     if _model_cache is None:
-        model = joblib.load(BASE_DIR / "model.pkl")
-        scaler = joblib.load(BASE_DIR / "scaler.pkl")
+        model = joblib.load(BASE_DIR / "KNN_model.pkl")
+        scaler = joblib.load(BASE_DIR / "KNN_scaler.pkl")
         _model_cache = (model, scaler)
     return _model_cache
 
@@ -316,3 +317,56 @@ def _get_primary_surface(row: pd.Series) -> str:
     """Helper to determine primary surface type (copied from recommender.py)."""
     from .recommender import get_primary_surface
     return get_primary_surface(row)
+
+
+def recommend_from_prompt(
+    user_prompt: str,
+    n_similar: int = 5,
+    surface_weight: float = 2.0,
+    openai_api_key: str = None,
+) -> Dict[str, Any]:
+    """
+    Generate route recommendations from a natural language prompt.
+
+    This is the complete pipeline for LLM-based route discovery:
+    1. Use GPT to convert prompt into 27 route features
+    2. Use KNN model to find similar routes + curveball from different cluster
+
+    Args:
+        user_prompt: Natural language description of desired route
+                    e.g., "A flat 10 km loop around Richmond Park, mostly paved"
+        n_similar: Number of similar recommendations to return (default 5)
+        surface_weight: Multiplier for surface/way features (default 2.0 = 2x importance)
+        openai_api_key: Optional OpenAI API key (uses OPENKEY env var if not provided)
+
+    Returns:
+        Dict with:
+            - "similar": List of n_similar routes
+            - "curveball": Single route from different cluster
+            - "user_cluster_id": Generated route's cluster ID
+            - "user_cluster_label": Generated route's cluster label
+            - "curveball_cluster_id": Curveball's cluster ID
+            - "curveball_cluster_label": Curveball's cluster label
+            - "generated_features": The features generated from the prompt (for debugging)
+
+    Raises:
+        ValueError: If OpenAI library not installed or API key missing
+        Exception: If LLM call fails or recommendation fails
+    """
+    # Step 1: Generate features from prompt using LLM
+    generated_features = _generate_features_from_prompt(
+        user_prompt=user_prompt,
+        openai_api_key=openai_api_key
+    )
+
+    # Step 2: Get recommendations with curveball using existing KNN model
+    result = recommend_with_curveball(
+        input_features=generated_features,
+        n_similar=n_similar,
+        surface_weight=surface_weight
+    )
+
+    # Add generated features to result for transparency/debugging
+    result["generated_features"] = generated_features
+
+    return result

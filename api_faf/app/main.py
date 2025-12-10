@@ -12,6 +12,7 @@ from .services import (
     load_kmeans,
     recommend_routes,
     recommend_with_curveball,
+    recommend_from_prompt,
     predict_cluster,
     run_distance_change_query,
     process_gpx_upload,
@@ -66,6 +67,21 @@ class CurveballResponse(BaseModel):
     curveball_cluster_label: str
 
 
+class PromptRequest(BaseModel):
+    prompt: str = Field(..., description="Natural language description of desired route")
+    n_similar: int = Field(default=5, ge=1, le=20)
+
+
+class PromptResponse(BaseModel):
+    similar: List[Recommendation]
+    curveball: Optional[Recommendation]
+    user_cluster_id: int
+    user_cluster_label: str
+    curveball_cluster_id: int
+    curveball_cluster_label: str
+    generated_features: Dict[str, Any]
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
@@ -94,6 +110,36 @@ def recommend_curveball(req: CurveballRequest):
     """
     try:
         result = recommend_with_curveball(req.features, n_similar=req.n_similar)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating recommendations: {str(exc)}")
+    return result
+
+
+@app.post("/recommend-from-prompt", response_model=PromptResponse)
+def recommend_from_prompt_endpoint(req: PromptRequest):
+    """
+    Generate route recommendations from a natural language prompt.
+
+    This endpoint uses LLM (GPT) to convert your description into route features,
+    then finds similar routes using the KNN model plus a curveball from a different cluster.
+
+    Examples:
+    - "A flat 10 km loop around Richmond Park, mostly paved, low traffic"
+    - "A challenging mountain route with steep climbs and gravel sections"
+    - "An easy 5km urban cycle path suitable for beginners"
+
+    The response includes:
+    - Similar routes matching your description
+    - A curveball route from a different cluster for variety
+    - The generated features (for debugging/transparency)
+    """
+    try:
+        result = recommend_from_prompt(
+            user_prompt=req.prompt,
+            n_similar=req.n_similar
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
