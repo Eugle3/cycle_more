@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from typing import Any, Dict, List, Union
 
 
@@ -49,6 +50,7 @@ def recommend_similar_routes(
     df: pd.DataFrame,
     feature_cols: List[str],
     n_recommendations: int = 5,
+    surface_weight: float = 2.0,
 ):
     """
     Minimal version of the notebook helper to run inside the API.
@@ -67,6 +69,10 @@ def recommend_similar_routes(
         Columns used to train the model (order matters).
     n_recommendations : int
         Number of similar routes to return.
+    surface_weight : float
+        Multiplier for surface/way type features to increase their importance.
+        Default 2.0 means surface features are 2x more important than other features.
+        Set to 1.0 for no weighting.
     """
     # Normalize input into a single-row DataFrame
     if isinstance(input_features, dict):
@@ -83,10 +89,22 @@ def recommend_similar_routes(
 
     input_df = input_df[feature_cols]
 
-    # Scale + find neighbors
+    # Scale features
     input_scaled = scaler.transform(input_df)
+
+    # Apply surface feature weighting if requested
+    if surface_weight != 1.0:
+        # Surface/way features are MinMaxScaled and appear at indices 7-18:
+        # Cycleway, on_road, off_road, Gravel_Tracks, Paved_Paths, Other,
+        # Unknown Surface, Paved_Road, Pedestrian, Unknown_Way, Cycle Track, Main Road
+        input_weighted = input_scaled.copy()
+        input_weighted[:, 7:19] *= surface_weight  # Multiply surface features by weight
+    else:
+        input_weighted = input_scaled
+
+    # Find neighbors using weighted features
     distances, indices = model.kneighbors(
-        input_scaled, n_neighbors=min(n_recommendations, len(df))
+        input_weighted, n_neighbors=min(n_recommendations, len(df))
     )
 
     recommendations = []

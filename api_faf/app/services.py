@@ -112,9 +112,15 @@ def predict_cluster(
 def recommend_routes(
     input_features: Union[Dict[str, Any], pd.Series, pd.DataFrame],
     n_recommendations: int = 5,
+    surface_weight: float = 2.0,
 ) -> List[Dict[str, Any]]:
     """
     Recommend similar routes given a feature payload.
+
+    Args:
+        input_features: Route features (dict, Series, or DataFrame)
+        n_recommendations: Number of recommendations to return
+        surface_weight: Multiplier for surface/way features (default 2.0 = 2x importance)
 
     Expects the model/scaler/data to be on disk next to this module.
     """
@@ -127,6 +133,7 @@ def recommend_routes(
         df=df,
         feature_cols=feature_cols,
         n_recommendations=n_recommendations,
+        surface_weight=surface_weight,
     )
 
 
@@ -172,9 +179,49 @@ def process_gpx_upload(gpx_content: bytes, n_recommendations: int = 5) -> List[D
     return recommendations
 
 
+def process_gpx_upload_with_curveball(
+    gpx_content: bytes, n_similar: int = 5, surface_weight: float = 2.0
+) -> Dict[str, Any]:
+    """
+    Process a GPX file upload and return recommendations with curveball.
+
+    This is the complete pipeline for GPX uploads with curveball:
+    1. Parse GPX and extract coordinates (smart sampling to 70 waypoints)
+    2. Call ORS API to get route features
+    3. Process and engineer features (same as training data)
+    4. Use KNN model to find similar routes + curveball from different cluster
+
+    Args:
+        gpx_content: Bytes content of the GPX file
+        n_similar: Number of similar recommendations to return (default 5)
+        surface_weight: Multiplier for surface/way features (default 2.0 = 2x importance)
+
+    Returns:
+        Dict with:
+            - "similar": List of n_similar routes
+            - "curveball": Single route from different cluster
+            - "user_cluster_id": User's cluster ID
+            - "user_cluster_label": User's cluster label
+            - "curveball_cluster_id": Curveball's cluster ID
+            - "curveball_cluster_label": Curveball's cluster label
+
+    Raises:
+        ValueError: If GPX parsing fails
+        Exception: If processing or model prediction fails
+    """
+    # Step 1-5: GPX → engineered features (uses FAF modules)
+    engineered_features = process_gpx_file(gpx_content)
+
+    # Step 6: Get recommendations with curveball using existing model/scaler
+    result = recommend_with_curveball(engineered_features, n_similar, surface_weight)
+
+    return result
+
+
 def recommend_with_curveball(
     input_features: Union[Dict[str, Any], pd.Series, pd.DataFrame],
     n_similar: int = 5,
+    surface_weight: float = 2.0,
 ) -> Dict[str, Any]:
     """
     Get route recommendations including a "curveball" from a different cluster.
@@ -185,6 +232,7 @@ def recommend_with_curveball(
     Args:
         input_features: Route features (same format as recommend_routes)
         n_similar: Number of similar routes to return (default 5)
+        surface_weight: Multiplier for surface/way features (default 2.0 = 2x importance)
 
     Returns:
         Dict with:
@@ -198,8 +246,8 @@ def recommend_with_curveball(
     # Get user's cluster
     user_cluster_id, user_cluster_label = predict_cluster(input_features)
 
-    # Get similar routes (KNN)
-    similar_routes = recommend_routes(input_features, n_recommendations=n_similar)
+    # Get similar routes (KNN) with surface weighting
+    similar_routes = recommend_routes(input_features, n_recommendations=n_similar, surface_weight=surface_weight)
 
     # Get curveball from different cluster
     df, feature_cols = load_data()
@@ -216,42 +264,43 @@ def recommend_with_curveball(
     input_df = input_df[feature_cols]
     input_scaled = scaler.transform(input_df)
 
-    # Filter to routes in different clusters
-    different_cluster_routes = df[df['cluster'] != user_cluster_id]
-
-    if len(different_cluster_routes) == 0:
-        # Edge case: only one cluster exists (shouldn't happen with 10 clusters)
-        curveball_route = None
-        curveball_cluster_id = user_cluster_id
-        curveball_cluster_label = user_cluster_label
+    # Apply surface weighting for curveball search too
+    if surface_weight != 1.0:
+        input_weighted = input_scaled.copy()
+        input_weighted[:, 7:19] *= surface_weight  # Weight surface/way features
     else:
-        # Get features for different cluster routes
-        different_X = different_cluster_routes[feature_cols]
-        different_X_scaled = scaler.transform(different_X)
+        input_weighted = input_scaled
 
-        # Find nearest neighbor from different clusters
-        distances, indices = model.kneighbors(input_scaled, n_neighbors=len(different_cluster_routes))
+    # Find nearest neighbor from different clusters
+    # Note: KNN model may have been trained on fewer routes than current CSV
+    # So we search through ALL neighbors and find first one from different cluster
+    max_neighbors = min(len(df), model.n_samples_fit_)  # Don't exceed model's training size
+    distances, indices = model.kneighbors(input_weighted, n_neighbors=max_neighbors)
 
-        # Find the first route that's in a different cluster
-        for dist, idx in zip(distances[0], indices[0]):
-            route = df.iloc[idx]
-            if route['cluster'] != user_cluster_id:
-                curveball_cluster_id = int(route['cluster'])
-                curveball_cluster_label = CLUSTER_LABELS.get(
-                    curveball_cluster_id, f"Cluster {curveball_cluster_id}"
-                )
+    curveball_route = None
+    curveball_cluster_id = user_cluster_id
+    curveball_cluster_label = user_cluster_label
 
-                curveball_route = {
-                    "route_id": int(route["id"]),
-                    "route_name": str(route["name"]),
-                    "distance_m": float(route["distance_m"]),
-                    "ascent_m": float(route["ascent_m"]),
-                    "duration_s": float(route["duration_s"]),
-                    "turn_density": float(route["Turn_Density"]),
-                    "similarity_score": float(dist),
-                    "primary_surface": _get_primary_surface(route),
-                }
-                break
+    # Find the first route that's in a different cluster
+    for dist, idx in zip(distances[0], indices[0]):
+        route = df.iloc[idx]
+        if route['cluster'] != user_cluster_id:
+            curveball_cluster_id = int(route['cluster'])
+            curveball_cluster_label = CLUSTER_LABELS.get(
+                curveball_cluster_id, f"Cluster {curveball_cluster_id}"
+            )
+
+            curveball_route = {
+                "route_id": int(route["id"]),
+                "route_name": str(route["name"]),
+                "distance_m": float(route["distance_m"]),
+                "ascent_m": float(route["ascent_m"]),
+                "duration_s": float(route["duration_s"]),
+                "turn_density": float(route["Turn_Density"]),
+                "similarity_score": float(dist),
+                "primary_surface": _get_primary_surface(route),
+            }
+            break
 
     return {
         "similar": similar_routes,

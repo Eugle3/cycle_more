@@ -15,6 +15,7 @@ from .services import (
     predict_cluster,
     run_distance_change_query,
     process_gpx_upload,
+    process_gpx_upload_with_curveball,
 )
 from .gpx_generator import generate_gpx_for_route
 from .route_visualizer import visualize_route
@@ -120,19 +121,19 @@ def distance_change(req: DistanceChangeRequest):
     return {"route": row, "tool_args": tool_args}
 
 
-@app.post("/recommend-from-gpx", response_model=List[Recommendation])
+@app.post("/recommend-from-gpx", response_model=CurveballResponse)
 async def recommend_from_gpx(file: UploadFile = File(...)):
     """
-    Upload a GPX file and get 5 similar route recommendations.
+    Upload a GPX file and get route recommendations with a curveball.
 
     The GPX file is processed through:
     1. Coordinate extraction (smart sampling to max 70 waypoints)
     2. ORS API call to get route features
     3. Feature engineering (same as training data)
-    4. KNN model prediction
+    4. KNN model prediction with curveball from different cluster
 
     Returns:
-        List of 5 similar routes with similarity scores
+        CurveballResponse with similar routes and a curveball recommendation
     """
     # Validate file type
     if not file.filename.endswith('.gpx'):
@@ -142,10 +143,10 @@ async def recommend_from_gpx(file: UploadFile = File(...)):
         # Read GPX content
         gpx_content = await file.read()
 
-        # Process GPX → features → recommendations
-        recommendations = process_gpx_upload(gpx_content)
+        # Process GPX → features → recommendations with curveball
+        result = process_gpx_upload_with_curveball(gpx_content)
 
-        return recommendations
+        return result
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"GPX parsing error: {str(e)}")
