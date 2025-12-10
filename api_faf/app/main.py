@@ -12,9 +12,11 @@ from .services import (
     load_kmeans,
     recommend_routes,
     recommend_with_curveball,
+    recommend_from_prompt,
     predict_cluster,
     run_distance_change_query,
     process_gpx_upload,
+    process_gpx_upload_with_curveball,
 )
 from .gpx_generator import generate_gpx_for_route
 from .route_visualizer import visualize_route
@@ -65,6 +67,21 @@ class CurveballResponse(BaseModel):
     curveball_cluster_label: str
 
 
+class PromptRequest(BaseModel):
+    prompt: str = Field(..., description="Natural language description of desired route")
+    n_similar: int = Field(default=5, ge=1, le=20)
+
+
+class PromptResponse(BaseModel):
+    similar: List[Recommendation]
+    curveball: Optional[Recommendation]
+    user_cluster_id: int
+    user_cluster_label: str
+    curveball_cluster_id: int
+    curveball_cluster_label: str
+    generated_features: Dict[str, Any]
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
@@ -100,6 +117,36 @@ def recommend_curveball(req: CurveballRequest):
     return result
 
 
+@app.post("/recommend-from-prompt", response_model=PromptResponse)
+def recommend_from_prompt_endpoint(req: PromptRequest):
+    """
+    Generate route recommendations from a natural language prompt.
+
+    This endpoint uses LLM (GPT) to convert your description into route features,
+    then finds similar routes using the KNN model plus a curveball from a different cluster.
+
+    Examples:
+    - "A flat 10 km loop around Richmond Park, mostly paved, low traffic"
+    - "A challenging mountain route with steep climbs and gravel sections"
+    - "An easy 5km urban cycle path suitable for beginners"
+
+    The response includes:
+    - Similar routes matching your description
+    - A curveball route from a different cluster for variety
+    - The generated features (for debugging/transparency)
+    """
+    try:
+        result = recommend_from_prompt(
+            user_prompt=req.prompt,
+            n_similar=req.n_similar
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating recommendations: {str(exc)}")
+    return result
+
+
 @app.post("/distance-change")
 def distance_change(req: DistanceChangeRequest):
     df: pd.DataFrame = _df
@@ -120,19 +167,19 @@ def distance_change(req: DistanceChangeRequest):
     return {"route": row, "tool_args": tool_args}
 
 
-@app.post("/recommend-from-gpx", response_model=List[Recommendation])
+@app.post("/recommend-from-gpx", response_model=CurveballResponse)
 async def recommend_from_gpx(file: UploadFile = File(...)):
     """
-    Upload a GPX file and get 5 similar route recommendations.
+    Upload a GPX file and get route recommendations with a curveball.
 
     The GPX file is processed through:
     1. Coordinate extraction (smart sampling to max 70 waypoints)
     2. ORS API call to get route features
     3. Feature engineering (same as training data)
-    4. KNN model prediction
+    4. KNN model prediction with curveball from different cluster
 
     Returns:
-        List of 5 similar routes with similarity scores
+        CurveballResponse with similar routes and a curveball recommendation
     """
     # Validate file type
     if not file.filename.endswith('.gpx'):
@@ -142,10 +189,10 @@ async def recommend_from_gpx(file: UploadFile = File(...)):
         # Read GPX content
         gpx_content = await file.read()
 
-        # Process GPX → features → recommendations
-        recommendations = process_gpx_upload(gpx_content)
+        # Process GPX → features → recommendations with curveball
+        result = process_gpx_upload_with_curveball(gpx_content)
 
-        return recommendations
+        return result
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"GPX parsing error: {str(e)}")

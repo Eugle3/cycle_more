@@ -10,3 +10,4 @@ raw_*
 *.csv
 *.json
 *.gpx
+*.backup
