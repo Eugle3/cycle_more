@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from typing import Any, Dict, List, Union
 
+from .route_namer import enhance_route_name
+
 
 def get_primary_surface(row: pd.Series) -> str:
     """
@@ -110,12 +112,24 @@ def recommend_similar_routes(
     recommendations = []
     for dist, idx in zip(distances[0], indices[0]):
         rec = df.iloc[idx]
+        route_id = int(rec["id"])
+        route_name = str(rec["name"])
+        distance_m = float(rec["distance_m"])
+        ascent_m = float(rec["ascent_m"])
+
+        # Enhance generic route names using geocoding (with fallback to distance/ascent)
+        route_name = enhance_route_name(
+            route_id, route_name,
+            distance_m=distance_m,
+            ascent_m=ascent_m
+        )
+
         recommendations.append(
             {
-                "route_id": int(rec["id"]),
-                "route_name": str(rec["name"]),
-                "distance_m": float(rec["distance_m"]),
-                "ascent_m": float(rec["ascent_m"]),
+                "route_id": route_id,
+                "route_name": route_name,
+                "distance_m": distance_m,
+                "ascent_m": ascent_m,
                 "duration_s": float(rec["duration_s"]),
                 "turn_density": float(rec["Turn_Density"]),
                 "similarity_score": float(dist),

@@ -19,6 +19,7 @@ from .llm_distance import run_distance_change_query as _run_distance_change_quer
 from .llm_features import generate_features_from_prompt as _generate_features_from_prompt
 from .recommender import recommend_similar_routes
 from .cluster_labels import CLUSTER_LABELS
+from .route_namer import enhance_route_name
 
 # Add FAF module to path for GPX processing
 # In Docker: services.py is at /app/app/services.py, FAF is at /app/FAF/
@@ -216,6 +217,9 @@ def process_gpx_upload_with_curveball(
     # Step 6: Get recommendations with curveball using existing model/scaler
     result = recommend_with_curveball(engineered_features, n_similar, surface_weight)
 
+    # Add the GPX file's engineered features to the result for display
+    result["gpx_features"] = engineered_features
+
     return result
 
 
@@ -291,11 +295,23 @@ def recommend_with_curveball(
                 curveball_cluster_id, f"Cluster {curveball_cluster_id}"
             )
 
+            route_id = int(route["id"])
+            route_name = str(route["name"])
+            distance_m = float(route["distance_m"])
+            ascent_m = float(route["ascent_m"])
+
+            # Enhance generic route names using geocoding (with fallback to distance/ascent)
+            route_name = enhance_route_name(
+                route_id, route_name,
+                distance_m=distance_m,
+                ascent_m=ascent_m
+            )
+
             curveball_route = {
-                "route_id": int(route["id"]),
-                "route_name": str(route["name"]),
-                "distance_m": float(route["distance_m"]),
-                "ascent_m": float(route["ascent_m"]),
+                "route_id": route_id,
+                "route_name": route_name,
+                "distance_m": distance_m,
+                "ascent_m": ascent_m,
                 "duration_s": float(route["duration_s"]),
                 "turn_density": float(route["Turn_Density"]),
                 "similarity_score": float(dist),
