@@ -2,16 +2,22 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .services import (
     change_route_distance,
     load_data,
     load_model_and_scaler,
+    load_kmeans,
     recommend_routes,
+    recommend_with_curveball,
+    predict_cluster,
     run_distance_change_query,
     process_gpx_upload,
 )
+from .gpx_generator import generate_gpx_for_route
+from .route_visualizer import visualize_route
 
 
 app = FastAPI(title="CycleMore API", version="0.1.0")
@@ -19,6 +25,7 @@ app = FastAPI(title="CycleMore API", version="0.1.0")
 # Warm caches at startup so the first request is fast.
 _df, _feature_cols = load_data()
 _model, _scaler = load_model_and_scaler()
+_kmeans = load_kmeans()
 
 
 class RecommendRequest(BaseModel):
@@ -34,6 +41,7 @@ class Recommendation(BaseModel):
     duration_s: float
     turn_density: float
     similarity_score: float
+    primary_surface: str
 
 
 class DistanceChangeRequest(BaseModel):
@@ -41,6 +49,20 @@ class DistanceChangeRequest(BaseModel):
     multiplier: float = Field(..., gt=0)
     use_llm: bool = False
     prompt: Optional[str] = None
+
+
+class CurveballRequest(BaseModel):
+    features: Dict[str, Any]
+    n_similar: int = Field(default=5, ge=1, le=20)
+
+
+class CurveballResponse(BaseModel):
+    similar: List[Recommendation]
+    curveball: Optional[Recommendation]
+    user_cluster_id: int
+    user_cluster_label: str
+    curveball_cluster_id: int
+    curveball_cluster_label: str
 
 
 @app.get("/health")
@@ -55,6 +77,27 @@ def recommend(req: RecommendRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return recs
+
+
+@app.post("/recommend-with-curveball", response_model=CurveballResponse)
+def recommend_curveball(req: CurveballRequest):
+    """
+    Get route recommendations including a "curveball" from a different cluster.
+
+    Returns 5 similar routes (KNN) plus 1 curveball route from a different cluster
+    to give users variety and help them discover new types of routes.
+
+    The response includes cluster labels to help explain the curveball:
+    - "Your route is a 'Short flat city ride'"
+    - "Try this 'Mountain climbing challenge' for something different!"
+    """
+    try:
+        result = recommend_with_curveball(req.features, n_similar=req.n_similar)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating recommendations: {str(exc)}")
+    return result
 
 
 @app.post("/distance-change")
@@ -108,3 +151,108 @@ async def recommend_from_gpx(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"GPX parsing error: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+
+
+@app.get("/download-gpx/{route_id}")
+def download_gpx(route_id: int):
+    """
+    Download a route as a GPX file.
+
+    Args:
+        route_id: The route ID to download
+
+    Returns:
+        GPX file ready for download
+    """
+    # Get route name from database
+    df, _ = load_data()
+    route_row = df[df['id'] == route_id]
+
+    if route_row.empty:
+        raise HTTPException(status_code=404, detail=f"Route {route_id} not found in database")
+
+    route_name = str(route_row.iloc[0]['name'])
+
+    try:
+        # Generate GPX from GCS
+        gpx_xml = generate_gpx_for_route(
+            route_id=route_id,
+            route_name=route_name,
+            bucket="cycle_more_bucket",
+            prefix="all_routes/"
+        )
+
+        # Return as downloadable file
+        return Response(
+            content=gpx_xml,
+            media_type="application/gpx+xml",
+            headers={
+                "Content-Disposition": f'attachment; filename="route_{route_id}.gpx"'
+            }
+        )
+
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Route data not found in GCS: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating GPX: {str(e)}"
+        )
+
+
+@app.get("/visualize-route/{route_id}")
+def visualize_route_endpoint(route_id: int):
+    """
+    Get interactive map visualization HTML for a route.
+
+    Args:
+        route_id: The route ID to visualize
+
+    Returns:
+        HTML content of the Folium map
+    """
+    # Get route details from database
+    df, _ = load_data()
+    route_row = df[df['id'] == route_id]
+
+    if route_row.empty:
+        raise HTTPException(status_code=404, detail=f"Route {route_id} not found in database")
+
+    route_name = str(route_row.iloc[0]['name'])
+    distance_km = float(route_row.iloc[0]['distance_m']) / 1000
+    ascent_m = float(route_row.iloc[0]['ascent_m'])
+
+    try:
+        # Generate Folium map HTML
+        map_html = visualize_route(
+            route_id=route_id,
+            route_name=route_name,
+            distance_km=distance_km,
+            ascent_m=ascent_m,
+            bucket="cycle_more_bucket"
+        )
+
+        # Return HTML
+        return Response(
+            content=map_html,
+            media_type="text/html"
+        )
+
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Route data not found in GCS: {str(e)}"
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid route data: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating visualization: {str(e)}"
+        )
